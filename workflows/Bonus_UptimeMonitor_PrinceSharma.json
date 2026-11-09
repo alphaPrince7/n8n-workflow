@@ -1,0 +1,160 @@
+{
+  "name": "Bonus - Uptime Monitor",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      },
+      "id": "b1111111-1111-4111-8111-111111111111",
+      "name": "Every 5 minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [-640, 240]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "u1",
+              "name": "targetUrl",
+              "value": "https://demo.realworld.io/",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "b2222222-2222-4222-8222-222222222222",
+      "name": "Set Target URL",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [-420, 240],
+      "notes": "The app under test (from Task 1). Change this to your locally running app if you run RealWorld locally."
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.targetUrl }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "b3333333-3333-4333-8333-333333333333",
+      "name": "Ping App",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-200, 240],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "notes": "neverError:true + fullResponse so we always get a status code to inspect (even on 5xx) instead of throwing. Retries 3x to avoid alerting on a single transient blip."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Record status + response time, and decide up/down.\nconst res = $input.first().json;\nconst statusCode = res.statusCode || (res.error && res.error.status) || 0;\nconst responseTimeMs = res.responseTime || null; // n8n adds this on fullResponse\nconst isUp = statusCode === 200;\n\nreturn [{\n  json: {\n    url: $('Set Target URL').first().json.targetUrl,\n    statusCode,\n    responseTimeMs,\n    isUp,\n    checkedAt: new Date().toISOString(),\n  },\n}];"
+      },
+      "id": "b4444444-4444-4444-8444-444444444444",
+      "name": "Code: Evaluate Status",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [20, 240]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "up",
+              "leftValue": "={{ $json.statusCode }}",
+              "rightValue": 200,
+              "operator": {
+                "type": "number",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b5555555-5555-4555-8555-555555555555",
+      "name": "IF status != 200",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [240, 240],
+      "notes": "Alert only when the app is NOT healthy. 200 -> no-op (true branch empty); anything else -> alert."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build the alert message.\nconst s = $input.first().json;\nconst content = `🚨 **UPTIME ALERT** 🚨\\n` +\n  `App: <${s.url}>\\n` +\n  `Status: **${s.statusCode || 'NO RESPONSE'}** (expected 200)\\n` +\n  (s.responseTimeMs ? `Response time: ${s.responseTimeMs} ms\\n` : '') +\n  `Checked at: ${s.checkedAt}`;\nreturn [{ json: { content } }];"
+      },
+      "id": "b6666666-6666-4666-8666-666666666666",
+      "name": "Code: Build Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 140]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $credentials.discordWebhook ? $credentials.discordWebhook.url : '' }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"content\": $json.content } }}",
+        "options": {}
+      },
+      "id": "b7777777-7777-4777-8777-777777777777",
+      "name": "Discord: Post Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 140],
+      "onError": "continueRegularOutput",
+      "notes": "Posts to the SAME Discord webhook credential used in Task 2. Never hard-coded."
+    }
+  ],
+  "connections": {
+    "Every 5 minutes": {
+      "main": [[{ "node": "Set Target URL", "type": "main", "index": 0 }]]
+    },
+    "Set Target URL": {
+      "main": [[{ "node": "Ping App", "type": "main", "index": 0 }]]
+    },
+    "Ping App": {
+      "main": [[{ "node": "Code: Evaluate Status", "type": "main", "index": 0 }]]
+    },
+    "Code: Evaluate Status": {
+      "main": [[{ "node": "IF status != 200", "type": "main", "index": 0 }]]
+    },
+    "IF status != 200": {
+      "main": [
+        [{ "node": "Code: Build Alert", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Code: Build Alert": {
+      "main": [[{ "node": "Discord: Post Alert", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}
